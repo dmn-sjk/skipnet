@@ -9,6 +9,8 @@ from torch.autograd import Variable
 import torch.autograd as autograd
 
 
+
+
 def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
@@ -848,7 +850,7 @@ class RLFeedforwardGateI(nn.Module):
         softmax = self.prob_layer(x)
 
         if self.training:
-            action = softmax.multinomial()
+            action = softmax.multinomial(1)
             self.saved_action = action
         else:
             action = (softmax[:, 1] > 0.5).float()
@@ -889,7 +891,7 @@ class RLFeedforwardGateII(nn.Module):
         softmax = self.prob_layer(x)
 
         if self.training:
-            action = softmax.multinomial()
+            action = softmax.multinomial(1)
             self.saved_action = action
         else:
             action = (softmax[:, 1] > 0.5).float()
@@ -1032,7 +1034,7 @@ class ResNetFeedForwardRL(nn.Module):
 
         if reinforce:  # for pure RL
             softmax = self.softmax(x)
-            action = softmax.multinomial()
+            action = softmax.multinomial(1)
             self.saved_actions.append(action)
 
         return x, masks, gprobs
@@ -1133,7 +1135,7 @@ class RNNGatePolicy(nn.Module):
             proj = self.proj(out.squeeze())
             prob = self.prob(proj)
             bi_prob = torch.cat([1 - prob, prob], dim=1)
-            action = bi_prob.multinomial()
+            action = bi_prob.multinomial(1)
             self.saved_actions.append(action)
         else:
             proj = self.proj(out.squeeze())
@@ -1265,7 +1267,7 @@ class ResNetRecurrentGateRL(nn.Module):
         if self.training:
             x = self.fc(x)
             softmax = self.softmax(x)
-            pred = softmax.multinomial()
+            pred = softmax.multinomial(1)
         else:
             x = self.fc(x)
             pred = x.max(1)[1]
@@ -1318,3 +1320,7 @@ def cifar100_rnn_gate_rl_110(pretrained=False, **kwargs):
     return model
 
 
+# NOTE: should be at the end, pretty silly, might move this to __init__.py file
+model_names = sorted(name for name in globals()
+                     if name.islower() and not name.startswith('__')
+                     and callable(globals()[name]))

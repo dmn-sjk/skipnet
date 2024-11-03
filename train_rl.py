@@ -5,106 +5,89 @@ from __future__ import print_function
 
 import torch
 import torch.nn as nn
-import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
-import torch.nn.functional as F
+from torch.distributions import Categorical
 
 import os
-import shutil
-import argparse
 import time
 import logging
 
 import models
-from data import *
-import pdb
-
-model_names = sorted(name for name in models.__dict__
-                     if name.islower() and not name.startswith('__')
-                     and callable(models.__dict__[name]))
-
-
-class BatchCrossEntropy(nn.Module):
-    def __init__(self):
-        super(BatchCrossEntropy, self).__init__()
-
-    def forward(self, x, target):
-        logp = F.log_softmax(x)
-        target = target.view(-1,1)
-        output = - logp.gather(1, target)
-        return output
+from datasets.data_loading import get_dataloader
+from utils.config import get_config, save_config
+from utils.math import BatchCrossEntropy
+from utils.utils import save_checkpoint, get_save_path, set_seed
+from utils.metrics import accuracy, ListAverageMeter, AverageMeter, save_final_metrics
 
 
-def parse_args():
-    # hyper-parameters are from ResNet paper
-    parser = argparse.ArgumentParser(
-        description='PyTorch CIFAR10 training with gating')
-    parser.add_argument('cmd', choices=['train', 'test', 'tune'])
-    parser.add_argument('arch', metavar='ARCH',
-                        default='cifar10_rnn_gate_rl_38',
-                        choices=model_names,
-                        help='model architecture: ' +
-                             ' | '.join(model_names) +
-                             ' (default: cifar10_rnn_rl_gate_38)')
-    parser.add_argument('--gate-type', default='ff', choices=['ff', 'rnn'],
-                        help='gate type')
-    parser.add_argument('--dataset', '-d', default='cifar10', type=str,
-                        choices=['cifar10', 'cifar100', 'svhn'],
-                        help='dataset type')
-    parser.add_argument('--workers', default=1, type=int, metavar='N',
-                        help='number of data loading workers (default: 4 )')
-    parser.add_argument('--iters', default=10000, type=int,
-                        help='number of total iterations '
-                             '(previous default: 64,000)')
-    parser.add_argument('--start-iter', default=0, type=int,
-                        help='manual iter number (useful on restarts)')
-    parser.add_argument('--batch-size', default=128, type=int,
-                        help='mini-batch size (default: 128)')
-    parser.add_argument('--lr', default=1e-4, type=float,
-                        help='initial learning rate')
-    parser.add_argument('--momentum', default=0.9, type=float,
-                        help='momentum')
-    parser.add_argument('--weight-decay', default=1e-4, type=float,
-                        help='weight decay (default: 1e-4)')
-    parser.add_argument('--print-freq', default=10, type=int,
-                        help='print frequency (default: 10)')
-    parser.add_argument('--resume', default='', type=str,
-                        help='path to  latest checkpoint (default: None)')
-    parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                        help='use pretrained model')
-    parser.add_argument('--step-ratio', default=0.1, type=float,
-                        help='ratio for learning rate deduction')
-    parser.add_argument('--warm-up', action='store_true',
-                        help='for n = 18, the model needs to warm up for 400 '
-                             'iterations')
-    parser.add_argument('--save-folder', default='save_checkpoints',
-                        type=str,
-                        help='folder to save the checkpoints')
-    parser.add_argument('--eval-every', default=200, type=int,
-                        help='evaluate model every (default: 200) iterations')
-    parser.add_argument('--fine_tune', action='store_true',
-                        help='fine tune model')
-    # rl params
-    parser.add_argument('--alpha', default=0.1, type=float,
-                        help='Reward magnitude for the '
-                             'average number of skipped layers')
-    parser.add_argument('--temperature', type=float, default=1,
-                        help='temperature of softmax')
-    parser.add_argument('--rl-weight', default=0.01, type=float,
-                        help='rl weight')
-    parser.add_argument('--gamma', default=1, type=float,
-                        help='discount factor, default: (0.99)')
-    parser.add_argument('--restart', action='store_true',
-                        help='restart training')
+    # parser = argparse.ArgumentParser(
+    #     description='PyTorch CIFAR10 training with gating')
+    # parser.add_argument('cmd', choices=['train', 'test', 'tune'])
+    # parser.add_argument('arch', metavar='ARCH',
+    #                     default='cifar10_rnn_gate_rl_38',
+    #                     choices=model_names,
+    #                     help='model architecture: ' +
+    #                          ' | '.join(model_names) +
+    #                          ' (default: cifar10_rnn_rl_gate_38)')
+    # parser.add_argument('--gate-type', default='ff', choices=['ff', 'rnn'],
+    #                     help='gate type')
+    # parser.add_argument('--dataset', '-d', default='cifar10', type=str,
+    #                     choices=['cifar10', 'cifar100', 'svhn'],
+    #                     help='dataset type')
+    # parser.add_argument('--workers', default=1, type=int, metavar='N',
+    #                     help='number of data loading workers (default: 4 )')
+    # parser.add_argument('--iters', default=10000, type=int,
+    #                     help='number of total iterations '
+    #                          '(previous default: 64,000)')
+    # parser.add_argument('--start-iter', default=0, type=int,
+    #                     help='manual iter number (useful on restarts)')
+    # parser.add_argument('--batch-size', default=128, type=int,
+    #                     help='mini-batch size (default: 128)')
+    # parser.add_argument('--lr', default=1e-4, type=float,
+    #                     help='initial learning rate')
+    # parser.add_argument('--momentum', default=0.9, type=float,
+    #                     help='momentum')
+    # parser.add_argument('--weight-decay', default=1e-4, type=float,
+    #                     help='weight decay (default: 1e-4)')
+    # parser.add_argument('--print-freq', default=10, type=int,
+    #                     help='print frequency (default: 10)')
+    # parser.add_argument('--resume', default='', type=str,
+    #                     help='path to  latest checkpoint (default: None)')
+    # parser.add_argument('--pretrained', dest='pretrained', action='store_true',
+    #                     help='use pretrained model')
+    # parser.add_argument('--step-ratio', default=0.1, type=float,
+    #                     help='ratio for learning rate deduction')
+    # parser.add_argument('--warm-up', action='store_true',
+    #                     help='for n = 18, the model needs to warm up for 400 '
+    #                          'iterations')
+    # parser.add_argument('--save-folder', default='save_checkpoints',
+    #                     type=str,
+    #                     help='folder to save the checkpoints')
+    # parser.add_argument('--eval-every', default=200, type=int,
+    #                     help='evaluate model every (default: 200) iterations')
+    # parser.add_argument('--fine_tune', action='store_true',
+    #                     help='fine tune model')
+    # # rl params
+    # parser.add_argument('--alpha', default=0.1, type=float,
+    #                     help='Reward magnitude for the '
+    #                          'average number of skipped layers')
+    # parser.add_argument('--temperature', type=float, default=1,
+    #                     help='temperature of softmax')
+    # parser.add_argument('--rl-weight', default=0.01, type=float,
+    #                     help='rl weight')
+    # parser.add_argument('--gamma', default=1, type=float,
+    #                     help='discount factor, default: (0.99)')
+    # parser.add_argument('--restart', action='store_true',
+    #                     help='restart training')
 
-    args = parser.parse_args()
-    return args
-
+    # args = parser.parse_args()
 
 def main():
-    args = parse_args()
-    save_path = args.save_path = os.path.join(args.save_folder, args.arch)
+    args = get_config()
+    save_path = args.save_path = get_save_path(args)
     os.makedirs(save_path, exist_ok=True)
+    
+    set_seed(args.seed)
 
     # config
     args.logger_file = os.path.join(save_path, 'log_{}.txt'.format(args.cmd))
@@ -115,6 +98,8 @@ def main():
                         datefmt='%m-%d-%y %H:%M',
                         format='%(asctime)s:%(message)s',
                         handlers=handlers)
+
+    save_config(args, os.path.join(save_path, 'config.yaml'))
 
     if args.cmd == 'train':
         logging.info('start training {}'.format(args.arch))
@@ -170,16 +155,8 @@ def run_training(args, tune_config={}, reporter=None):
         else:
             logging.info('=> no checkpoint found at `{}`'.format(args.resume))
 
-    cudnn.benchmark = True
-
-    train_loader = prepare_train_data(dataset=args.dataset,
-                                      batch_size=args.batch_size,
-                                      shuffle=True,
-                                      num_workers=args.workers)
-    test_loader = prepare_test_data(dataset=args.dataset,
-                                    batch_size=args.batch_size,
-                                    shuffle=False,
-                                    num_workers=args.workers)
+    train_loader = get_dataloader(args, split='train')
+    test_loader = get_dataloader(args, split='val')
 
     # define loss function (criterion) and optimizer
     criterion = BatchCrossEntropy().cuda()
@@ -237,23 +214,28 @@ def run_training(args, tune_config={}, reporter=None):
 
         # apply REINFORCE to each gate
         # Pytorch 2.0 version. `reinforce` function got removed in Pytorch 3.0
-        for action, R in zip(gate_saved_actions, cum_rewards):
-             action.reinforce(args.rl_weight * R)
+        rl_losses = 0
+        for action, prob, R in zip(gate_saved_actions, probs, cum_rewards):
+            # action.reinforce(args.rl_weight * R)
+            dist = Categorical(prob)
+            _loss = -dist.log_prob(action)*R
+            rl_losses += _loss
+        rl_losses = rl_losses.mean()
 
-
-        total_loss = total_criterion(output, target_var)
+        total_loss = total_criterion(output, target_var) + rl_losses * args.rl_weight
 
         optimizer.zero_grad()
         # optimize hybrid loss
-        torch.autograd.backward(gate_saved_actions + [total_loss])
+        # torch.autograd.backward(gate_saved_actions + [total_loss])
+        total_loss.backward()
         optimizer.step()
 
         # measure accuracy and record loss
         prec1, = accuracy(output.data, target, topk=(1,))
         total_rewards.update(cum_rewards[0].mean(), input.size(0))
-        total_losses.update(total_loss.mean().data[0], input.size(0))
-        losses.update(pred_loss.mean().data[0], input.size(0))
-        top1.update(prec1[0], input.size(0))
+        total_losses.update(total_loss.mean().data.item(), input.size(0))
+        losses.update(pred_loss.mean().data.item(), input.size(0))
+        top1.update(prec1.item(), input.size(0))
         skip_ratios.update(skips, input.size(0))
         total_gate_reward = sum([r.mean() for r in gate_rewards])
 
@@ -302,17 +284,21 @@ def run_training(args, tune_config={}, reporter=None):
             checkpoint_path = os.path.join(args.save_path,
                                            'checkpoint_{:05d}.pth.tar'.format(
                                                i))
-            save_checkpoint({
-                'iter': i,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
-            },
-                is_best, filename=checkpoint_path)
-            shutil.copyfile(checkpoint_path, os.path.join(args.save_path,
-                                                          'checkpoint_latest'
-                                                          '.pth.tar'))
+            if is_best:
+                save_checkpoint({
+                    'iter': i,
+                    'arch': args.arch,
+                    'state_dict': model.state_dict(),
+                    'best_prec1': best_prec1,
+                },
+                    is_best, filename=checkpoint_path)
+            # shutil.copyfile(checkpoint_path, os.path.join(args.save_path,
+            #                                               'checkpoint_latest'
+            #                                               '.pth.tar'))
 
+    save_final_metrics({
+        'bestAcc@1Val': best_prec1
+    }, os.path.join(args.save_path, 'metric.yaml'))
 
 def validate(args, test_loader, model):
     batch_time = AverageMeter()
@@ -327,17 +313,18 @@ def validate(args, test_loader, model):
     end = time.time()
     for i, (input, target) in enumerate(test_loader):
         target = target.cuda(async=True)
-        input_var = Variable(input, volatile=True).cuda()
-        target_var = Variable(target, volatile=True).cuda()
+        input_var = input.cuda()
+        target_var = target.cuda()
 
-        output, masks, probs = model(input_var)
+        with torch.no_grad():
+            output, masks, probs = model(input_var)
         skips = [mask.data.le(0.5).float().mean() for mask in masks]
         if skip_ratios.len != len(skips):
             skip_ratios.set_len(len(skips))
 
         # measure accuracy and record loss
         prec1, = accuracy(output.data, target, topk=(1,))
-        top1.update(prec1[0], input.size(0))
+        top1.update(prec1.item(), input.size(0))
         skip_ratios.update(skips, input.size(0))
         batch_time.update(time.time() - end)
         end = time.time()
@@ -390,68 +377,9 @@ def test_model(args):
         else:
             logging.info('=> no checkpoint found at `{}`'.format(args.resume))
 
-    cudnn.benchmark = False
-    test_loader = prepare_test_data(dataset=args.dataset,
-                                    batch_size=args.batch_size,
-                                    shuffle=False,
-                                    num_workers=args.workers)
+    test_loader = get_dataloader(args, split='test')
 
     validate(args, test_loader, model)
-
-
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    if not os.path.exists(os.path.dirname(filename)):
-        os.makedirs(os.path.dirname(filename))
-    torch.save(state, filename)
-    if is_best:
-        save_path = os.path.dirname(filename)
-        shutil.copyfile(filename, os.path.join(save_path,
-                                               'model_best.pth.tar'))
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-class ListAverageMeter(object):
-    """Computes and stores the average and current values of a list"""
-    def __init__(self):
-        self.len = 10000  # set up the maximum length
-        self.reset()
-
-    def reset(self):
-        self.val = [0] * self.len
-        self.avg = [0] * self.len
-        self.sum = [0] * self.len
-        self.count = 0
-
-    def set_len(self, n):
-        self.len = n
-        self.reset()
-
-    def update(self, vals, n=1):
-        assert len(vals) == self.len, 'length of vals not equal to self.len'
-        self.val = vals
-        for i in range(self.len):
-            self.sum[i] += self.val[i] * n
-        self.count += n
-        for i in range(self.len):
-            self.avg[i] = self.sum[i] / self.count
 
 
 def adjust_learning_rate(args, optimizer, _iter):
@@ -470,22 +398,6 @@ def adjust_learning_rate(args, optimizer, _iter):
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
 
 
 if __name__ == '__main__':

@@ -5,75 +5,27 @@ from __future__ import print_function
 
 import torch
 import torch.nn as nn
-import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 
 import os
 import shutil
-import argparse
 import time
 import logging
 
 import models
-from data import *
-
-
-model_names = sorted(name for name in models.__dict__
-                     if name.islower() and not name.startswith('__')
-                     and callable(models.__dict__[name])
-                     )
-
-
-def parse_args():
-    # hyper-parameters are from ResNet paper
-    parser = argparse.ArgumentParser(description='PyTorch CIFAR10 training')
-    parser.add_argument('cmd', choices=['train', 'test'])
-    parser.add_argument('arch', metavar='ARCH', default='cifar10_resnet_110',
-                        choices=model_names,
-                        help='model architecture: ' +
-                             ' | '.join(model_names) +
-                             ' (default: cifar10_resnet_110)')
-    parser.add_argument('--dataset', '-d', type=str, default='cifar10',
-                        choices=['cifar10', 'cifar100'],
-                        help='dataset choice')
-    parser.add_argument('--workers', default=8, type=int, metavar='N',
-                        help='number of data loading workers (default: 4 )')
-    parser.add_argument('--iters', default=64000, type=int,
-                        help='number of total iterations (default: 64,000)')
-    parser.add_argument('--start-iter', default=0, type=int,
-                        help='manual iter number (useful on restarts)')
-    parser.add_argument('--batch-size', default=128, type=int,
-                        help='mini-batch size (default: 128)')
-    parser.add_argument('--lr', default=0.1, type=float,
-                        help='initial learning rate')
-    parser.add_argument('--momentum', default=0.9, type=float,
-                        help='momentum')
-    parser.add_argument('--weight-decay', default=1e-4, type=float,
-                        help='weight decay (default: 1e-4)')
-    parser.add_argument('--print-freq', default=10, type=int,
-                        help='print frequency (default: 10)')
-    parser.add_argument('--resume', default='', type=str,
-                        help='path to  latest checkpoint (default: None)')
-    parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                        help='use pretrained model')
-    parser.add_argument('--step-ratio', default=0.1, type=float,
-                        help='ratio for learning rate deduction')
-    parser.add_argument('--warm-up', action='store_true',
-                        help='for n = 18, the model needs to warm up for 400 '
-                             'iterations')
-    parser.add_argument('--save-folder', default='save_checkpoints/', type=str,
-                        help='folder to save the checkpoints')
-    parser.add_argument('--eval-every', default=1000, type=int,
-                        help='evaluate model every (default: 1000) iterations')
-    args = parser.parse_args()
-    return args
+from datasets.data_loading import get_dataloader
+from utils.config import get_config, save_config
+from utils.utils import save_checkpoint, get_save_path, set_seed
+from utils.metrics import AverageMeter, accuracy, save_final_metrics
 
 
 def main():
-    args = parse_args()
-    save_path = args.save_path = os.path.join(args.save_folder, args.arch)
+    args = get_config()
+    save_path = args.save_path = get_save_path(args)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
+
+    set_seed(args.seed)
 
     # config logging file
     args.logger_file = os.path.join(save_path, 'log_{}.txt'.format(args.cmd))
@@ -83,6 +35,8 @@ def main():
                         datefmt='%m-%d-%y %H:%M',
                         format='%(asctime)s:%(message)s',
                         handlers=handlers)
+    
+    save_config(args, os.path.join(save_path, 'config.yaml'))
 
     if args.cmd == 'train':
         logging.info('start training {}'.format(args.arch))
@@ -115,16 +69,8 @@ def run_training(args):
         else:
             logging.info('=> no checkpoint found at `{}`'.format(args.resume))
 
-    cudnn.benchmark = False
-
-    train_loader = prepare_train_data(dataset=args.dataset,
-                                      batch_size=args.batch_size,
-                                      shuffle=True,
-                                      num_workers=args.workers)
-    test_loader = prepare_test_data(dataset=args.dataset,
-                                    batch_size=args.batch_size,
-                                    shuffle=False,
-                                    num_workers=args.workers)
+    train_loader = get_dataloader(args, split='train')
+    test_loader = get_dataloader(args, split='val')
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -157,8 +103,8 @@ def run_training(args):
 
         # measure accuracy and record loss
         prec1, = accuracy(output.data, target, topk=(1,))
-        losses.update(loss.data[0], input.size(0))
-        top1.update(prec1[0], input.size(0))
+        losses.update(loss.data.item(), input.size(0))
+        top1.update(prec1.item(), input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -202,6 +148,9 @@ def run_training(args):
             shutil.copyfile(checkpoint_path, os.path.join(args.save_path,
                                                           'checkpoint_latest'
                                                           '.pth.tar'))
+    save_final_metrics({
+        'bestAcc@1Val': best_prec1
+    }, os.path.join(args.save_path, 'metric.yaml'))
 
 
 def validate(args, test_loader, model, criterion):
@@ -214,17 +163,18 @@ def validate(args, test_loader, model, criterion):
     end = time.time()
     for i, (input, target) in enumerate(test_loader):
         target = target.squeeze().long().cuda(async=True)
-        input_var = Variable(input, volatile=True)
-        target_var = Variable(target, volatile=True)
+        input_var = input
+        target_var = target
 
         # compute output
-        output = model(input_var)
+        with torch.no_grad():
+            output = model(input_var)
         loss = criterion(output, target_var)
 
         # measure accuracy and record loss
         prec1, = accuracy(output.data, target, topk=(1,))
-        top1.update(prec1[0], input.size(0))
-        losses.update(loss.data[0], input.size(0))
+        top1.update(prec1.item(), input.size(0))
+        losses.update(loss.data.item(), input.size(0))
         batch_time.update(time.time() - end)
         end = time.time()
 
@@ -261,42 +211,11 @@ def test_model(args):
         else:
             logging.info('=> no checkpoint found at `{}`'.format(args.resume))
 
-    cudnn.benchmark = False
-    test_loader = prepare_test_data(dataset=args.dataset,
-                                    batch_size=args.batch_size,
-                                    shuffle=False,
-                                    num_workers=args.workers)
+    test_loader = get_dataloader(args, split='test')
+
     criterion = nn.CrossEntropyLoss().cuda()
 
     validate(args, test_loader, model, criterion)
-
-
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
-    if is_best:
-        save_path = os.path.dirname(filename)
-        shutil.copyfile(filename, os.path.join(save_path,
-                                               'model_best.pth.tar'))
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
 
 def adjust_learning_rate(args, optimizer, _iter):
     """divide lr by 10 at 32k and 48k """
@@ -314,22 +233,6 @@ def adjust_learning_rate(args, optimizer, _iter):
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
 
 
 if __name__ == '__main__':
