@@ -64,7 +64,6 @@ def main():
         raise NotImplementedError('Only corrupted for now')
     
     res_dict = OrderedDict()
-    yaml.add_representer(OrderedDict, lambda dumper, data: dumper.represent_mapping('tag:yaml.org,2002:map', data.items()))
 
     args.severity = 5
     for i, corruption in enumerate(CORRUPTIONS):
@@ -72,9 +71,8 @@ def main():
         logging.info('start training {} - {} - {}'.format(args.arch, args.corruption, args.severity))
         curr_task_acc, best_model_path = run_training(args, model, i)
         
-        task_key = f'task_{i} - ({args.corruption}_{args.severity})'
-        
-        res_dict[task_key] = {
+        res_dict[i] = {
+            'domain': f'{args.corruption}_{args.severity}', 
             'curr_acc': curr_task_acc
         }
 
@@ -87,7 +85,8 @@ def main():
             args.corruption = val_corr
             test_loader = get_dataloader(args, split='val')
             acc, _ = validate(args, test_loader, model, criterion)
-            res_dict[task_key][f'task_{j}_acc'] = acc
+            res_dict[i][f'task_{j}_acc'] = acc
+            res_dict[i][f'task_{j}_acc_diff_init'] = acc - res_dict[j]['curr_acc']
         
         save_final_metrics(res_dict, save_path=os.path.join(args.save_path, 'metric.yaml'))
 
