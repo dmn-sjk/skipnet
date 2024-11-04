@@ -8,7 +8,6 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 import os
-import shutil
 import time
 import logging
 from collections import OrderedDict
@@ -148,7 +147,7 @@ def run_training(args, model, task_id):
                          "Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
                          "Data {data_time.val:.3f} ({data_time.avg:.3f})\t"
                          "Loss {loss.val:.3f} ({loss.avg:.3f})\t"
-                         "Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t".format(
+                         "Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t".format(
                             task_id,
                             i,
                             args.iters,
