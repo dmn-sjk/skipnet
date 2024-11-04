@@ -3,7 +3,8 @@ import yaml
 
 def save_final_metrics(metrics: dict, save_path):
     with open(save_path, 'w') as file:
-        yaml.safe_dump(metrics, file)
+        # to parse OrderedDict correctly
+        yaml.safe_dump(dict(metrics), file, default_flow_style=False, sort_keys=False)
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy@k for the specified values of k"""
