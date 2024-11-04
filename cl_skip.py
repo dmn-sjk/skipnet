@@ -8,7 +8,6 @@ import os
 import time
 import logging
 from collections import OrderedDict
-import yaml
 from torch.distributions import Categorical
 
 import models
@@ -63,7 +62,6 @@ def main():
         raise NotImplementedError('Only corrupted for now')
     
     res_dict = OrderedDict()
-    yaml.add_representer(OrderedDict, lambda dumper, data: dumper.represent_mapping('tag:yaml.org,2002:map', data.items()))
 
     args.severity = 5
     for i, corruption in enumerate(CORRUPTIONS):
@@ -71,9 +69,8 @@ def main():
         logging.info('start training {} - {} - {}'.format(args.arch, args.corruption, args.severity))
         curr_task_acc, _ = run_training(args, model, i)
         
-        task_key = f'task_{i} - ({args.corruption}_{args.severity})'
-        
-        res_dict[task_key] = {
+        res_dict[i] = {
+            'domain': f'{args.corruption}_{args.severity}', 
             'curr_acc': curr_task_acc
         }
 
@@ -82,7 +79,8 @@ def main():
             args.corruption = val_corr
             test_loader = get_dataloader(args, split='val')
             acc, _ = validate(args, test_loader, model, criterion)
-            res_dict[task_key][f'task_{j}_acc'] = acc
+            res_dict[i][f'task_{j}_acc'] = acc
+            res_dict[i][f'task_{j}_acc_diff_init'] = acc - res_dict[j]['curr_acc']
         
         save_final_metrics(res_dict, save_path=os.path.join(args.save_path, 'metric.yaml'))
 
@@ -109,7 +107,7 @@ def train_sp(args, model, task_id, train_loader, test_loader):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+    optimizer = torch.optim.SGD(model.parameters(), args.lr_sp,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
 
@@ -215,7 +213,7 @@ def train_rl(args, model, task_id, train_loader, test_loader):
     criterion = BatchCrossEntropy().cuda()
     total_criterion = nn.CrossEntropyLoss().cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+    optimizer = torch.optim.SGD(model.parameters(), args.lr_rl,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
     
@@ -226,6 +224,10 @@ def train_rl(args, model, task_id, train_loader, test_loader):
     elif args.gate_type == 'rnn':
         gate_saved_actions = model.module.control.saved_actions
         gate_rewards = model.module.control.rewards
+        
+    # clear saved actions and rewards
+    del gate_saved_actions[:]
+    del gate_rewards[:]
 
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -330,7 +332,7 @@ def train_rl(args, model, task_id, train_loader, test_loader):
             )
 
         if (i % args.eval_every == 0 and i > 0) or (i == args.iters - 1):
-            prec1, loss = validate(args, test_loader, model, criterion)
+            prec1, loss = validate(args, test_loader, model, total_criterion)
             
             # clear saved actions and rewards
             del gate_saved_actions[:]

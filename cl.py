@@ -21,6 +21,7 @@ from utils.math import BatchCrossEntropy
 
 
 def main():
+    raise NotImplementedError()
     args = get_config()
     save_path = args.save_path = get_save_path(args)
     if not os.path.exists(save_path):
