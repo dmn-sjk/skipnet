@@ -5,14 +5,16 @@ import random
 import yaml
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar', name_prefix=''):
     if not os.path.exists(os.path.dirname(filename)):
         os.makedirs(os.path.dirname(filename))
 
     if is_best:
-        save_path = os.path.join(os.path.dirname(filename), 'model_best.pth.tar')
+        save_path = os.path.join(os.path.dirname(filename), name_prefix + '_' * (len(name_prefix) > 0) + 'model_best.pth.tar')
         torch.save(state, save_path)
     else:
+        if len(name_prefix) > 0:
+            raise NotADirectoryError()
         save_path = filename
         torch.save(state, save_path)
     return save_path

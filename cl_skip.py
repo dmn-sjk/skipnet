@@ -16,7 +16,7 @@ from utils.config import get_config, save_config
 from utils.utils import save_checkpoint, get_save_path, set_seed
 from utils.metrics import AverageMeter, accuracy, save_final_metrics, ListAverageMeter
 from datasets.cifar_c_dataset import CORRUPTIONS
-from utils.math import BatchCrossEntropy
+from utils.modules import BatchCrossEntropy
 
 
 def main():
@@ -189,7 +189,9 @@ def train_sp(args, model, task_id, train_loader, test_loader):
                     'state_dict': model.state_dict(),
                     'best_prec1': best_prec1,
                 },
-                    is_best, filename=checkpoint_path)
+                    is_best, filename=checkpoint_path
+                    # , name_prefix=str(task_id)
+                    )
             
             # 2. Early stopping
             if loss < (best_loss - 0.001):
@@ -350,7 +352,9 @@ def train_rl(args, model, task_id, train_loader, test_loader):
                     'state_dict': model.state_dict(),
                     'best_prec1': best_prec1,
                 },
-                    is_best, filename=checkpoint_path)
+                    is_best, filename=checkpoint_path
+                    # , name_prefix=str(task_id)
+                    )
             
             # 2. Early stopping
             if loss < (best_loss - 0.001):

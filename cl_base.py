@@ -170,7 +170,9 @@ def run_training(args, model, task_id):
                     'state_dict': model.state_dict(),
                     'best_prec1': best_prec1,
                 },
-                    is_best, filename=checkpoint_path)
+                    is_best, filename=checkpoint_path
+                    # name_prefix=str(task_id)
+                    )
             
             # 2. Early stopping
             if loss < (best_loss - 0.001):

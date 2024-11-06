@@ -17,7 +17,7 @@ from utils.config import get_config, save_config
 from utils.utils import save_checkpoint, get_save_path, set_seed
 from utils.metrics import AverageMeter, accuracy, save_final_metrics, ListAverageMeter
 from datasets.cifar_c_dataset import CORRUPTIONS
-from utils.math import BatchCrossEntropy
+from utils.modules import BatchCrossEntropy
 
 
 def main():

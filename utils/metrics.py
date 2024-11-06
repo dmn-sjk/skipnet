@@ -1,4 +1,5 @@
 import yaml
+import numpy as np
 
 
 def save_final_metrics(metrics: dict, save_path):
@@ -65,3 +66,61 @@ class ListAverageMeter(object):
         self.count += n
         for i in range(self.len):
             self.avg[i] = self.sum[i] / self.count
+
+def backward_transfer_metric(task_performances, current_task_index):
+    """
+    Calculate the backward transfer metric for continual learning.
+    
+    The backward transfer metric measures how much the model's performance on previous tasks
+    improves or degrades as it learns new tasks.
+    
+    Parameters:
+    task_performances (list): A list of task performance values, where each value represents
+                             the model's performance on a task. The list is ordered
+                             chronologically by when the tasks were learned.
+    current_task_index (int): The index of the current task being learned.
+    
+    Returns:
+    float: The backward transfer metric value.
+    """
+    if current_task_index == 0:
+        return 0.0
+    
+    previous_tasks_performances = task_performances[:current_task_index]
+    current_task_performance = task_performances[current_task_index]
+    
+    # Calculate the average performance on previous tasks
+    previous_tasks_avg = np.mean(previous_tasks_performances)
+    
+    # Calculate the backward transfer metric
+    backward_transfer = (current_task_performance - previous_tasks_avg) / previous_tasks_avg
+    
+    return backward_transfer
+
+def forgetting_metric(task_performances, current_task_index):
+    """
+    Calculate the forgetting metric for continual learning.
+    
+    The forgetting metric measures how much the model's performance on previous tasks
+    degrades as it learns new tasks.
+    
+    Parameters:
+    task_performances (list): A list of task performance values, where each value represents
+                             the model's performance on a task. The list is ordered
+                             chronologically by when the tasks were learned.
+    current_task_index (int): The index of the current task being learned.
+    
+    Returns:
+    float: The forgetting metric value.
+    """
+    if current_task_index == 0:
+        return 0.0
+    
+    previous_tasks_performances = task_performances[:current_task_index]
+    best_previous_performance = max(previous_tasks_performances)
+    current_task_performance = task_performances[current_task_index]
+    
+    # Calculate the forgetting metric
+    forgetting = (best_previous_performance - current_task_performance) / best_previous_performance
+    
+    return forgetting
