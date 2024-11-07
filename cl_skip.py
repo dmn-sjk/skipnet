@@ -75,12 +75,14 @@ def main():
         }
 
         # evaluate on previous domains
-        for j, val_corr in enumerate(CORRUPTIONS[:i]):
+        # for j, val_corr in enumerate(CORRUPTIONS[:i]):
+        for j, val_corr in enumerate(CORRUPTIONS):
             args.corruption = val_corr
             test_loader = get_dataloader(args, split='val')
             acc, _ = validate(args, test_loader, model, criterion)
             res_dict[i][f'task_{j}_acc'] = acc
-            res_dict[i][f'task_{j}_acc_diff_init'] = acc - res_dict[j]['curr_acc']
+            if j in res_dict.keys():
+                res_dict[i][f'task_{j}_acc_diff_init'] = acc - res_dict[j]['curr_acc']
         
         save_final_metrics(res_dict, save_path=os.path.join(args.save_path, 'metric.yaml'))
 
@@ -88,6 +90,7 @@ def run_training(args, model, task_id):
     train_loader = get_dataloader(args, split='train')
     test_loader = get_dataloader(args, split='val')
     
+    # if task_id == 0:
     acc, best_model_path = train_sp(args, model, task_id, train_loader, test_loader)
     # load best model 
     checkpoint = torch.load(best_model_path)
@@ -97,8 +100,155 @@ def run_training(args, model, task_id):
     # load best model 
     checkpoint = torch.load(best_model_path)
     model.load_state_dict(checkpoint['state_dict'])
+    # else:
+    #     acc, best_model_path = gated_train(args, model, task_id, train_loader, test_loader)
+    #     # load best model 
+    #     checkpoint = torch.load(best_model_path)
+    #     model.load_state_dict(checkpoint['state_dict'])
+
+    # best_model_path = 'save_checkpoints/cl/cifar10_rnn_gate_rl_38/cifar10c/test/model_best.pth.tar'
+    # checkpoint = torch.load(best_model_path)
+    # model.load_state_dict(checkpoint['state_dict'])
+
+    # model.eval()
+    # all_masks = [torch.empty(0) for i in range(17)]
+    # for i, (input, target) in enumerate(train_loader): 
+    #     input_var = Variable(input)
+    #     with torch.no_grad():
+    #         output, masks, _ = model(input_var)
+
+    #     for j, mask in enumerate(masks):
+    #         all_masks[j] = torch.cat((all_masks[j], mask.cpu()), dim=0)
+    
+    # for j, mask in enumerate(all_masks):
+    #     # all_masks[j] = torch.sum(mask, dim=0) > mask.shape[0]
+    #     all_masks[j] = torch.mean(mask, dim=0)
+        
+    #     checkpoint_path = os.path.join(args.save_path,
+    #                                     'checkpoint_{:05d}.pth.tar'.format(
+    #                                         i))
+    # m = torch.stack(all_masks, dim=0)
+    # save_path = os.path.join(os.path.dirname(checkpoint_path), str(task_id) + '_' + 'avg_mask.pth')    
+    # torch.save(m, save_path)
+    
+    # acc = 0
 
     return acc, best_model_path
+
+def gated_train(args, model, task_id, train_loader, test_loader):
+    best_prec1 = 0
+    best_loss = float('inf')
+    
+    model.requires_grad_(True)
+    from models import RNNGatePolicy
+    for module in model.modules():
+        if isinstance(module, RNNGatePolicy):
+            module.requires_grad_(False)
+            print('Freezing gating policy!')
+
+    # define loss function (criterion) and optimizer
+    criterion = nn.CrossEntropyLoss().cuda()
+
+    optimizer = torch.optim.SGD([p for p in model.parameters() if p.requires_grad], 
+                                args.lr_sp,
+                                momentum=args.momentum,
+                                weight_decay=args.weight_decay)
+
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    skip_ratios = ListAverageMeter()
+
+    end = time.time()
+    for i in range(args.start_iter, args.iters):
+        model.train()
+
+        input, target = next(iter(train_loader))
+        # measuring data loading time
+        data_time.update(time.time() - end)
+
+        target = target.squeeze().long().cuda(non_blocking=True)
+        input_var = Variable(input)
+        target_var = Variable(target)
+
+        # compute output
+        output, masks, _ = model(input_var)
+
+        # collect skip ratio of each layer
+        skips = [mask.data.le(0.5).float().mean() for mask in masks]
+        if skip_ratios.len != len(skips):
+            skip_ratios.set_len(len(skips))
+        
+        loss = criterion(output, target_var)
+
+        # measure accuracy and record loss
+        prec1, = accuracy(output.data, target, topk=(1,))
+        losses.update(loss.data.item(), input.size(0))
+        top1.update(prec1.item(), input.size(0))
+        skip_ratios.update(skips, input.size(0))
+
+        # compute gradient and do SGD step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # repackage hidden units for RNN Gate
+        # if args.gate_type == 'rnn':
+        #     model.module.control.repackage_hidden()
+
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        # print log
+        if i % args.print_freq == 0 or i == (args.iters - 1):
+            logging.info("Task: {0}\t"
+                         "Iter: [{1}/{2}]\t"
+                         "Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
+                         "Data {data_time.val:.3f} ({data_time.avg:.3f})\t"
+                         "Loss {loss.val:.3f} ({loss.avg:.3f})\t"
+                         "Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t".format(
+                            task_id,
+                            i,
+                            args.iters,
+                            batch_time=batch_time,
+                            data_time=data_time,
+                            loss=losses,
+                            top1=top1)
+            )
+
+        if (i % args.eval_every == 0 and i > 0) or (i == args.iters - 1):
+            prec1, loss = validate(args, test_loader, model, criterion)
+            is_best = prec1 > best_prec1
+            best_prec1 = max(prec1, best_prec1)
+            checkpoint_path = os.path.join(args.save_path,
+                                           'checkpoint_{:05d}.pth.tar'.format(
+                                               i))
+            if is_best:
+                best_model_path = save_checkpoint({
+                    'iter': i,
+                    'arch': args.arch,
+                    'state_dict': model.state_dict(),
+                    'best_prec1': best_prec1,
+                },
+                    is_best, filename=checkpoint_path
+                    # , name_prefix=str(task_id)
+                    )
+            
+            # 2. Early stopping
+            if loss < (best_loss - 0.001):
+                best_loss = loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            patience = 5
+            if patience_counter >= patience:
+                logging.info("Early stopping stop!")
+                break
+    
+    return best_prec1, best_model_path
 
 def train_sp(args, model, task_id, train_loader, test_loader):
     best_prec1 = 0
