@@ -1,0 +1,26 @@
+exp_name: def
+
+cmd: train # [train, test]
+arch: cifar10_resnet_38 # cifar100_resnet_38
+gate_type: rnn # [rnn, ff]
+dataset: cifar10 # [cifar10, cifar100],
+data_root: /datasets
+workers: 4
+iters: 10000
+start_iter: 0
+batch_size: 128
+lr: 0.1
+momentum: 0.9
+weight_decay: 1.e-4
+print_freq: 100
+resume: '' # path to  latest checkpoint
+pretrained: False
+step_ratio: 0.1 # ratio for learning rate reduction'
+warm_up: False
+save_folder: save_checkpoints
+eval_every: 60
+verbose: False
+seed: 1
+
+severity: 5
+domain: gaussian_noise

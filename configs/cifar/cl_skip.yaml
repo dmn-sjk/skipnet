@@ -31,4 +31,4 @@ gamma: 1 # discount factor, default
 restart: False # restart training
 
 severity: 5
-corruption: gaussian_noise
+domain: gaussian_noise

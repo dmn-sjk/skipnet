@@ -14,11 +14,10 @@ from collections import OrderedDict
 import yaml
 
 import models
-from datasets.data_loading import get_dataloader
+from datasets.data_loading import get_dataloader, get_domain_sequence
 from utils.config import get_config, save_config
 from utils.utils import save_checkpoint, get_save_path, set_seed
 from utils.metrics import AverageMeter, accuracy, save_final_metrics
-from datasets.cifar_c_dataset import CORRUPTIONS
 
 
 def main():
@@ -64,15 +63,17 @@ def main():
         raise NotImplementedError('Only corrupted for now')
     
     res_dict = OrderedDict()
+    
+    domain_seq = get_domain_sequence(args)
 
     args.severity = 5
-    for i, corruption in enumerate(CORRUPTIONS):
-        args.corruption = corruption
-        logging.info('start training {} - {} - {}'.format(args.arch, args.corruption, args.severity))
+    for i, domain in enumerate(domain_seq):
+        args.domain = domain
+        logging.info('start training {} - {} - {}'.format(args.arch, args.domain, args.severity))
         curr_task_acc, best_model_path = run_training(args, model, i)
         
         res_dict[i] = {
-            'domain': f'{args.corruption}_{args.severity}', 
+            'domain': f'{args.domain}_{args.severity}', 
             'curr_acc': curr_task_acc
         }
 
@@ -81,8 +82,8 @@ def main():
         model.load_state_dict(checkpoint['state_dict'])
 
         # evaluate on previous domains
-        for j, val_corr in enumerate(CORRUPTIONS[:i]):
-            args.corruption = val_corr
+        for j, val_domain in enumerate(domain_seq):
+            args.domain = val_domain
             test_loader = get_dataloader(args, split='val')
             acc, _ = validate(args, test_loader, model, criterion)
             res_dict[i][f'task_{j}_acc'] = acc
@@ -175,13 +176,13 @@ def run_training(args, model, task_id):
                     )
             
             # 2. Early stopping
-            if loss < (best_loss - 0.001):
+            if loss < (best_loss - 0.0001):
                 best_loss = loss
                 patience_counter = 0
             else:
                 patience_counter += 1
             
-            patience = 5
+            patience = 10
             if patience_counter >= patience:
                 logging.info("Early stopping stop!")
                 break

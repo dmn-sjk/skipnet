@@ -139,6 +139,7 @@ def run_training(args, tune_config={}, reporter=None):
         gate_rewards = model.module.control.rewards
 
     best_prec1 = 0
+    best_loss = float('inf')
 
     # load checkpoint from supervised pre-training stage
     if args.resume:
@@ -273,7 +274,7 @@ def run_training(args, tune_config={}, reporter=None):
 
         # evaluation
         if (i % args.eval_every == 0) or (i == (args.iters-1)):
-            prec1, cp = validate(args, test_loader, model)
+            prec1, cp, loss = validate(args, test_loader, model, total_criterion)
 
             # clear saved actions and rewards
             del gate_saved_actions[:]
@@ -296,11 +297,23 @@ def run_training(args, tune_config={}, reporter=None):
             #                                               'checkpoint_latest'
             #                                               '.pth.tar'))
 
+            # 2. Early stopping
+            if loss < (best_loss -  0.0001):
+                best_loss = loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            patience = 10
+            if patience_counter >= patience:
+                logging.info("Early stopping stop!")
+                break
+
     save_final_metrics({
         'bestAcc@1Val': best_prec1
     }, os.path.join(args.save_path, 'metric.yaml'))
 
-def validate(args, test_loader, model):
+def validate(args, test_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
     total_losses = AverageMeter()
@@ -321,10 +334,13 @@ def validate(args, test_loader, model):
         skips = [mask.data.le(0.5).float().mean() for mask in masks]
         if skip_ratios.len != len(skips):
             skip_ratios.set_len(len(skips))
+        
+        loss = criterion(output, target_var)
 
         # measure accuracy and record loss
         prec1, = accuracy(output.data, target, topk=(1,))
         top1.update(prec1.item(), input.size(0))
+        losses.update(loss.data.item(), input.size(0))
         skip_ratios.update(skips, input.size(0))
         batch_time.update(time.time() - end)
         end = time.time()
@@ -356,7 +372,7 @@ def validate(args, test_loader, model):
     cp = ((sum(skip_summaries) + 1) / (len(skip_summaries) + 1)) * 100
     logging.info('*** Computation Percentage: {:.3f} %'.format(cp))
 
-    return top1.avg, cp
+    return top1.avg, cp, losses.avg
 
 
 def test_model(args):

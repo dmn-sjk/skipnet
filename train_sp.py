@@ -54,6 +54,7 @@ def run_training(args):
     model = torch.nn.DataParallel(model).cuda()
 
     best_prec1 = 0
+    best_loss = float('inf')
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -153,7 +154,7 @@ def run_training(args):
 
         # evaluate every 1000 steps
         if (i % args.eval_every == 0 and i > 0) or (i == (args.iters-1)):
-            prec1 = validate(args, test_loader, model, criterion)
+            prec1, loss = validate(args, test_loader, model, criterion)
             is_best = prec1 > best_prec1
             best_prec1 = max(prec1, best_prec1)
             checkpoint_path = os.path.join(args.save_path,
@@ -170,6 +171,18 @@ def run_training(args):
             # shutil.copyfile(checkpoint_path, os.path.join(args.save_path,
             #                                               'checkpoint_latest'
             #                                               '.pth.tar'))
+            
+            # 2. Early stopping
+            if loss < (best_loss - 0.0001):
+                best_loss = loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+            
+            patience = 10
+            if patience_counter >= patience:
+                logging.info("Early stopping stop!")
+                break
 
     save_final_metrics({
         'bestAcc@1Val': best_prec1
@@ -232,7 +245,7 @@ def validate(args, test_loader, model, criterion):
     cp = ((sum(skip_summaries) + 1) / (len(skip_summaries) + 1)) * 100
     logging.info('*** Computation Percentage: {:.3f} %'.format(cp))
 
-    return top1.avg
+    return top1.avg, losses.avg
 
 
 def test_model(args):

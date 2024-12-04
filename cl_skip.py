@@ -11,11 +11,10 @@ from collections import OrderedDict
 from torch.distributions import Categorical
 
 import models
-from datasets.data_loading import get_dataloader
+from datasets.data_loading import get_dataloader, get_domain_sequence
 from utils.config import get_config, save_config
 from utils.utils import save_checkpoint, get_save_path, set_seed
 from utils.metrics import AverageMeter, accuracy, save_final_metrics, ListAverageMeter
-from datasets.cifar_c_dataset import CORRUPTIONS
 from utils.modules import BatchCrossEntropy
 
 
@@ -29,8 +28,10 @@ def main():
 
     # config logging file
     args.logger_file = os.path.join(save_path, 'log_{}.txt'.format(args.cmd))
-    handlers = [logging.FileHandler(args.logger_file, mode='w'),
-                logging.StreamHandler()]
+    handlers = [
+        logging.FileHandler(args.logger_file, mode='w'),
+        logging.StreamHandler()
+        ]
     logging.basicConfig(level=logging.INFO,
                         datefmt='%m-%d-%y %H:%M',
                         format='%(asctime)s:%(message)s',
@@ -57,27 +58,25 @@ def main():
             ))
         else:
             logging.info('=> no checkpoint found at `{}`'.format(args.resume))
-
-    if args.dataset[-1] != 'c':
-        raise NotImplementedError('Only corrupted for now')
     
     res_dict = OrderedDict()
 
+    domain_seq = get_domain_sequence(args)
+    
     args.severity = 5
-    for i, corruption in enumerate(CORRUPTIONS):
-        args.corruption = corruption
-        logging.info('start training {} - {} - {}'.format(args.arch, args.corruption, args.severity))
+    for i, domain in enumerate(domain_seq):
+        args.domain = domain
+        logging.info('start training {} - {} - {}'.format(args.arch, args.domain, args.severity))
         curr_task_acc, _ = run_training(args, model, i)
-        
+ 
         res_dict[i] = {
-            'domain': f'{args.corruption}_{args.severity}', 
+            'domain': f'{args.domain}_{args.severity}', 
             'curr_acc': curr_task_acc
         }
-
+ 
         # evaluate on previous domains
-        # for j, val_corr in enumerate(CORRUPTIONS[:i]):
-        for j, val_corr in enumerate(CORRUPTIONS):
-            args.corruption = val_corr
+        for j, val_domain in enumerate(domain_seq):
+            args.domain = val_domain
             test_loader = get_dataloader(args, split='val')
             acc, _ = validate(args, test_loader, model, criterion)
             res_dict[i][f'task_{j}_acc'] = acc
@@ -109,29 +108,6 @@ def run_training(args, model, task_id):
     # best_model_path = 'save_checkpoints/cl/cifar10_rnn_gate_rl_38/cifar10c/test/model_best.pth.tar'
     # checkpoint = torch.load(best_model_path)
     # model.load_state_dict(checkpoint['state_dict'])
-
-    # model.eval()
-    # all_masks = [torch.empty(0) for i in range(17)]
-    # for i, (input, target) in enumerate(train_loader): 
-    #     input_var = Variable(input)
-    #     with torch.no_grad():
-    #         output, masks, _ = model(input_var)
-
-    #     for j, mask in enumerate(masks):
-    #         all_masks[j] = torch.cat((all_masks[j], mask.cpu()), dim=0)
-    
-    # for j, mask in enumerate(all_masks):
-    #     # all_masks[j] = torch.sum(mask, dim=0) > mask.shape[0]
-    #     all_masks[j] = torch.mean(mask, dim=0)
-        
-    #     checkpoint_path = os.path.join(args.save_path,
-    #                                     'checkpoint_{:05d}.pth.tar'.format(
-    #                                         i))
-    # m = torch.stack(all_masks, dim=0)
-    # save_path = os.path.join(os.path.dirname(checkpoint_path), str(task_id) + '_' + 'avg_mask.pth')    
-    # torch.save(m, save_path)
-    
-    # acc = 0
 
     return acc, best_model_path
 
@@ -237,7 +213,7 @@ def gated_train(args, model, task_id, train_loader, test_loader):
                     )
             
             # 2. Early stopping
-            if loss < (best_loss - 0.001):
+            if loss < (best_loss - 0.0001):
                 best_loss = loss
                 patience_counter = 0
             else:
@@ -344,7 +320,7 @@ def train_sp(args, model, task_id, train_loader, test_loader):
                     )
             
             # 2. Early stopping
-            if loss < (best_loss - 0.001):
+            if loss < (best_loss - 0.0001):
                 best_loss = loss
                 patience_counter = 0
             else:
@@ -507,13 +483,13 @@ def train_rl(args, model, task_id, train_loader, test_loader):
                     )
             
             # 2. Early stopping
-            if loss < (best_loss - 0.001):
+            if loss < (best_loss - 0.0001):
                 best_loss = loss
                 patience_counter = 0
             else:
                 patience_counter += 1
             
-            patience = 5
+            patience = 10
             if patience_counter >= patience:
                 logging.info("Early stopping stop!")
                 break
@@ -567,6 +543,35 @@ def validate(args, test_loader, model, criterion):
     return top1.avg, losses.avg
 
 
+def save_gate_masks(args, model, task_id):
+    train_loader = get_dataloader(args, split='train')
+    test_loader = get_dataloader(args, split='val')
+
+    model.eval()
+
+    def save_masks(loader, split):
+        all_masks = [torch.empty(0) for i in range(17)]
+        for i, (input, target) in enumerate(loader): 
+            input_var = Variable(input)
+            with torch.no_grad():
+                output, masks, _ = model(input_var)
+
+            for j, mask in enumerate(masks):
+                all_masks[j] = torch.cat((all_masks[j], mask.cpu()), dim=0)
+
+        for j, mask in enumerate(all_masks):
+            # all_masks[j] = torch.sum(mask, dim=0) > mask.shape[0]
+            all_masks[j] = torch.mean(mask, dim=0)
+            
+            checkpoint_path = os.path.join(args.save_path,
+                                            'checkpoint_{:05d}.pth.tar'.format(
+                                                i))
+        m = torch.stack(all_masks, dim=0)
+        save_path = os.path.join(os.path.dirname(checkpoint_path), str(task_id) + '_' + split + '_' + 'avg_mask.pth')    
+        torch.save(m, save_path)
+        
+    save_masks(train_loader, 'train')
+    save_masks(test_loader, 'val')
 
 if __name__ == '__main__':
     main()

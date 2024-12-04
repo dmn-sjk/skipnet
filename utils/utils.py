@@ -2,7 +2,6 @@ import os
 import torch
 import numpy as np
 import random
-import yaml
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar', name_prefix=''):
